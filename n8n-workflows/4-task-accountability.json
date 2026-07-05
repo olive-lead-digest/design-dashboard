@@ -1,0 +1,125 @@
+{
+  "name": "DD-4 Task Accountability Tracker",
+  "settings": { "executionOrder": "v1" },
+  "meta": { "note": "Export of live workflow ZlT3CaaU0toLxIMT. Credentials referenced by ID in n8n: Supabase dsZvYaB5av1RwbxL, Anthropic mXPwb5lEbxPFmxDt. NO email nodes (tester mode)." },
+  "nodes": [
+    {
+      "id": "a53d8943-42e0-46eb-a823-83bc2882744e",
+      "name": "Daily 09:00 Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-420, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "days", "daysInterval": 1, "triggerAtHour": 9, "triggerAtMinute": 0 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac2d5881-9ce7-4a79-8713-d4a925ee5953",
+      "name": "Fetch All Team Tasks",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [-200, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "team_tasks",
+        "returnAll": true,
+        "filterType": "none"
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "745862bd-6e00-4bda-a8d6-c35e08070349",
+      "name": "Compute Accountability Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [20, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const now = Date.now();\nconst tasks = $input.all().map(i => i.json).filter(t => t && t.id);\nconst isDone = t => String(t.status) === 'Done';\nconst dueMs = t => { const d = new Date(t.due_date).getTime(); return isNaN(d) ? null : d; };\nconst overdue = tasks.filter(t => !isDone(t) && dueMs(t) !== null && dueMs(t) < now);\nconst toUpdate = overdue.filter(t => String(t.status) !== 'Overdue');\nconst byMember = {};\ntasks.forEach(t => { const key = String(t.task_owner_email || 'unassigned'); if (!byMember[key]) { byMember[key] = []; } byMember[key].push(t); });\nconst metrics = Object.keys(byMember).sort().map(email => { const list = byMember[email]; const done = list.filter(isDone); const od = list.filter(t => !isDone(t) && dueMs(t) !== null && dueMs(t) < now); const durations = done.filter(t => t.completed_at && t.created_at).map(t => (new Date(t.completed_at).getTime() - new Date(t.created_at).getTime()) / 86400000).filter(d => !isNaN(d) && d >= 0); const avg = durations.length ? Math.round((durations.reduce((a, b) => a + b, 0) / durations.length) * 10) / 10 : null; return { bd_member_email: email, total_tasks: list.length, completed_tasks: done.length, completion_rate: list.length ? Math.round((done.length / list.length) * 100) / 100 : 0, overdue_count: od.length, avg_completion_time_days: avg }; });\nreturn [{ json: { user_email: 'n8n@workflow.internal', action: 'accountability_daily_check', table_name: 'team_tasks', new_values: { checked_at: new Date().toISOString(), total_tasks: tasks.length, overdue_count: overdue.length, newly_marked_overdue: toUpdate.length, metrics: metrics }, overdue_task_ids: toUpdate.map(t => t.id) } }];"
+      }
+    },
+    {
+      "id": "8a28347e-58cb-48fb-8c35-c5482e13d7ed",
+      "name": "Insert Daily Audit Log",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [240, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "audit_logs",
+        "dataToSend": "autoMapInputData",
+        "inputsToIgnore": "overdue_task_ids"
+      }
+    },
+    {
+      "id": "aa4618bf-f643-46c7-a72a-a4ecad6e61c5",
+      "name": "List Overdue Task IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const ids = $('Compute Accountability Metrics').first().json.overdue_task_ids || [];\nreturn ids.map(id => ({ json: { id: id } }));"
+      }
+    },
+    {
+      "id": "4f971964-249a-49b6-824d-ff6e3cd5acd9",
+      "name": "Mark Task Overdue",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [680, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "tableId": "team_tasks",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [{ "keyName": "id", "condition": "eq", "keyValue": "={{ $json.id }}" }]
+        },
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [{ "fieldId": "status", "fieldValue": "Overdue" }]
+        }
+      }
+    },
+    {
+      "id": "007860b6-fdeb-4c3e-8f53-8b7efb2761c5",
+      "name": "Sticky Note 22165f31",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-470, -50],
+      "parameters": {
+        "content": "## DD-4 Task Accountability Tracker\nRuns daily at 09:00. IMPORTANT: set this workflow timezone to Asia/Kolkata in Workflow Settings (the SDK cannot set it programmatically).\n\nFetches all team_tasks, computes per-member metrics (bd_member_email = task_owner_email, total, completed, completion_rate, overdue_count, avg_completion_time_days), marks overdue tasks (due_date in the past and status not Done) as Overdue, and writes ONE audit_logs row with action accountability_daily_check containing overdue_count + metrics.\n\nTester mode: audit log only - NO emails, NO notification nodes.\nManual step: repoint Supabase credential dsZvYaB5av1RwbxL to https://fwzdhmobfcwsspobrvdl.supabase.co (service_role key).",
+        "color": 3,
+        "width": 1400,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Daily 09:00 Trigger": {
+      "main": [[{ "node": "Fetch All Team Tasks", "type": "main", "index": 0 }]]
+    },
+    "Fetch All Team Tasks": {
+      "main": [[{ "node": "Compute Accountability Metrics", "type": "main", "index": 0 }]]
+    },
+    "Compute Accountability Metrics": {
+      "main": [[{ "node": "Insert Daily Audit Log", "type": "main", "index": 0 }]]
+    },
+    "Insert Daily Audit Log": {
+      "main": [[{ "node": "List Overdue Task IDs", "type": "main", "index": 0 }]]
+    },
+    "List Overdue Task IDs": {
+      "main": [[{ "node": "Mark Task Overdue", "type": "main", "index": 0 }]]
+    }
+  }
+}

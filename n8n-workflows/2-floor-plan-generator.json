@@ -1,0 +1,212 @@
+{
+  "name": "DD-2 Floor Plan Generator",
+  "settings": { "executionOrder": "v1" },
+  "meta": { "note": "Export of live workflow oUpM3vzntzG3KVOv. Credentials referenced by ID in n8n: Supabase dsZvYaB5av1RwbxL, Anthropic mXPwb5lEbxPFmxDt. NO email nodes (tester mode)." },
+  "nodes": [
+    {
+      "id": "f84f8292-ef63-40ce-b2e5-77b8ef7c84fa",
+      "name": "Webhook: Floor Plan Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-420, 60],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "floor-plan-generator",
+        "responseMode": "responseNode"
+      },
+      "webhookId": "76115ab3-32ea-48de-bf3b-1a3799b26a86"
+    },
+    {
+      "id": "412375bd-ed15-41ab-bcfa-40e88315c633",
+      "name": "Normalize Plan Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-200, 60],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const src = $input.first().json;\nconst b = src.body && typeof src.body === 'object' ? src.body : src;\nconst projectId = String(b.project_id || src.project_id || '').trim();\nlet width = Number(b.width_ft !== undefined ? b.width_ft : src.width_ft) || 40;\nlet depth = Number(b.depth_ft !== undefined ? b.depth_ft : src.depth_ft) || 60;\nlet rooms = parseInt(b.rooms !== undefined ? b.rooms : src.rooms, 10);\nif (!rooms || rooms < 2) { rooms = 6; }\nif (rooms > 12) { rooms = 12; }\nif (width < 20) { width = 20; }\nif (width > 200) { width = 200; }\nif (depth < 20) { depth = 20; }\nif (depth > 200) { depth = 200; }\nconst designType = String(b.design_type || src.design_type || 'Standard').trim();\nreturn [{ json: { project_id: projectId, width_ft: width, depth_ft: depth, rooms: rooms, design_type: designType } }];"
+      }
+    },
+    {
+      "id": "b25260cb-ba48-470e-9a83-99df76128fa3",
+      "name": "Fetch Project",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [20, 60],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "tableId": "projects",
+        "filters": {
+          "conditions": [{ "keyName": "id", "keyValue": "={{ $json.project_id }}" }]
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "33706427-42f3-4cea-b068-739783f98c40",
+      "name": "Project Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [240, 60],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.id }}",
+              "operator": { "type": "string", "operation": "notEmpty" },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "1402149e-e49f-45d4-8ffa-d9da5fd2b4fb",
+      "name": "Get Existing Plans",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [460, -40],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "floor_plans",
+        "returnAll": true,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "project_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Plan Input').item.json.project_id }}"
+            }
+          ]
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b6721d9a-e3c4-4689-9288-59a0c5d6dd81",
+      "name": "Generate Floor Plan Layout",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, -40],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const cfg = $('Normalize Plan Input').first().json;\nconst existing = $input.all().map(i => i.json).filter(r => r && r.plan_version !== undefined && r.plan_version !== null);\nconst nextVersion = existing.length ? Math.max.apply(null, existing.map(r => Number(r.plan_version) || 0)) + 1 : 1;\nconst W = Number(cfg.width_ft) || 40;\nconst D = Number(cfg.depth_ft) || 60;\nconst roomCount = Number(cfg.rooms) || 6;\nconst corridorD = 6;\nconst r2 = n => Math.round(n * 100) / 100;\nconst bandD = r2((D - corridorD) / 2);\nconst topCount = Math.ceil(roomCount / 2);\nconst botCount = roomCount - topCount;\nconst palette = ['#cfe8ff', '#ffe3cf', '#d8f5d0', '#f5d0e6', '#fff2b8', '#d0d8f5', '#e0cfff', '#cffff2', '#ffd6d6', '#e8ffcf', '#cfd9ff', '#ffe9f0'];\nconst roomNames = ['Living Room', 'Kitchen', 'Bedroom 1', 'Bedroom 2', 'Bathroom 1', 'Study', 'Dining', 'Utility', 'Bedroom 3', 'Bathroom 2', 'Balcony', 'Store Room'];\nconst rooms = [];\nconst addBand = (count, y0) => { if (count < 1) { return; } const w = r2(W / count); for (let i = 0; i < count; i++) { const idx = rooms.length; rooms.push({ name: roomNames[idx] || ('Room ' + (idx + 1)), x: r2(i * w), y: y0, w: w, d: bandD }); } };\naddBand(topCount, 0);\naddBand(botCount, r2(bandD + corridorD));\nconst Q = String.fromCharCode(34);\nconst attr = (k, v) => ' ' + k + '=' + Q + v + Q;\nconst S = 10;\nconst M = 50;\nconst svgW = W * S + M * 2;\nconst svgH = D * S + M * 2;\nconst parts = [];\nparts.push('<svg' + attr('xmlns', 'http://www.w3.org/2000/svg') + attr('viewBox', '0 0 ' + svgW + ' ' + svgH) + attr('font-family', 'Arial, Helvetica, sans-serif') + '>');\nparts.push('<rect' + attr('x', 0) + attr('y', 0) + attr('width', svgW) + attr('height', svgH) + attr('fill', '#ffffff') + '/>');\nparts.push('<rect' + attr('x', M) + attr('y', M) + attr('width', W * S) + attr('height', D * S) + attr('fill', '#fafafa') + attr('stroke', '#1f2937') + attr('stroke-width', 4) + '/>');\nparts.push('<rect' + attr('x', M) + attr('y', M + bandD * S) + attr('width', W * S) + attr('height', corridorD * S) + attr('fill', '#ececec') + attr('stroke', '#6b7280') + attr('stroke-width', 1) + '/>');\nparts.push('<text' + attr('x', M + (W * S) / 2) + attr('y', M + bandD * S + (corridorD * S) / 2 + 5) + attr('text-anchor', 'middle') + attr('font-size', 14) + attr('fill', '#6b7280') + '>Corridor ' + W + ' ft x ' + corridorD + ' ft</text>');\nrooms.forEach((r, i) => { const x = M + r.x * S; const y = M + r.y * S; const w = r.w * S; const d = r.d * S; parts.push('<rect' + attr('x', x) + attr('y', y) + attr('width', w) + attr('height', d) + attr('fill', palette[i % palette.length]) + attr('stroke', '#374151') + attr('stroke-width', 2) + '/>'); parts.push('<text' + attr('x', x + w / 2) + attr('y', y + d / 2 - 4) + attr('text-anchor', 'middle') + attr('font-size', 16) + attr('fill', '#111827') + '>' + r.name + '</text>'); parts.push('<text' + attr('x', x + w / 2) + attr('y', y + d / 2 + 16) + attr('text-anchor', 'middle') + attr('font-size', 12) + attr('fill', '#374151') + '>' + r.w + ' ft x ' + r.d + ' ft (' + r2(r.w * r.d) + ' sqft)</text>'); });\nparts.push('<text' + attr('x', M + (W * S) / 2) + attr('y', M - 15) + attr('text-anchor', 'middle') + attr('font-size', 16) + attr('fill', '#111827') + '>Total width: ' + W + ' ft</text>');\nparts.push('<text' + attr('x', 15) + attr('y', M + (D * S) / 2) + attr('font-size', 16) + attr('fill', '#111827') + attr('transform', 'rotate(-90 15 ' + (M + (D * S) / 2) + ')') + attr('text-anchor', 'middle') + '>Total depth: ' + D + ' ft</text>');\nparts.push('</svg>');\nconst svg = parts.join('');\nconst boxes = rooms.map((r, i) => ({ name: r.name, x: r.x, y: 0, z: r.y, w: r.w, d: r.d, h: 10, color: palette[i % palette.length] }));\nboxes.push({ name: 'Corridor', x: 0, y: 0, z: bandD, w: W, d: corridorD, h: 10, color: '#ececec' });\nconst model3d = { totalW: W, totalD: D, wallHeight: 10, boxes: boxes };\nconst dimensions = { total_sqft: r2(W * D), layout: 'two-room-bands-with-central-corridor', corridor_sqft: r2(W * corridorD), rooms: rooms.map(r => ({ name: r.name, sqft: r2(r.w * r.d), dimensions: r.w + ' ft x ' + r.d + ' ft' })) };\nconst finishes = { Standard: { flooring: 'Vitrified tiles', walls: 'Acrylic emulsion paint', doors: 'Flush doors with laminate finish', windows: 'UPVC sliding windows', rate: 1800 }, Premium: { flooring: 'Engineered wood and tiles', walls: 'Premium emulsion with accent panels', doors: 'Veneer finished solid core doors', windows: 'UPVC casement windows with mesh', rate: 2600 }, Luxury: { flooring: 'Italian marble and engineered wood', walls: 'Textured finish with wall paneling', doors: 'Teak wood doors', windows: 'Aluminium double glazed windows', rate: 4200 } };\nconst designType = finishes[cfg.design_type] ? cfg.design_type : 'Standard';\nconst finish = finishes[designType];\nconst materials = { design_type: designType, flooring: finish.flooring, wall_finish: finish.walls, doors: finish.doors, windows: finish.windows, estimated_material_rate_inr_per_sqft: finish.rate, estimated_material_cost_inr: Math.round(W * D * finish.rate) };\nreturn [{ json: { project_id: cfg.project_id, plan_version: nextVersion, plan_2d_svg_url: 'data:image/svg+xml;utf8,' + encodeURIComponent(svg), plan_3d_model_url: 'data:application/json;utf8,' + encodeURIComponent(JSON.stringify(model3d)), dimensions_json: dimensions, materials_json: materials, generated_by: 'n8n@workflow.internal', design_notes: 'Generated by n8n DD-2 (' + roomCount + ' rooms, ' + W + ' ft x ' + D + ' ft, ' + designType + ' finish)' } }];"
+      }
+    },
+    {
+      "id": "a5e3b203-21c0-4939-9ca6-284ceaf62347",
+      "name": "Save Floor Plan",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [900, -40],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "floor_plans",
+        "dataToSend": "autoMapInputData"
+      }
+    },
+    {
+      "id": "80d3496a-8fd6-40e4-b73b-39b99fa712a6",
+      "name": "Log Communication",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1120, -40],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "communications",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "project_id", "fieldValue": "={{ $('Normalize Plan Input').item.json.project_id }}" },
+            { "fieldId": "communication_type", "fieldValue": "status_update" },
+            { "fieldId": "subject", "fieldValue": "Floor plans generated - ready for owner review" },
+            { "fieldId": "message", "fieldValue": "=Floor plan version {{ $json.plan_version }} generated and saved for owner review." },
+            { "fieldId": "sent_by_email", "fieldValue": "n8n@workflow.internal" },
+            { "fieldId": "sent_to_owner", "fieldValue": "false" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "aff4df55-2a10-4885-8fa7-1fe57dbda5d3",
+      "name": "Respond Generated",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [1340, -40],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"generated\", \"plan_version\": {{ $(\"Save Floor Plan\").item.json.plan_version }} }"
+      }
+    },
+    {
+      "id": "afc2deba-6a3b-4d62-8f3f-c2e24067f731",
+      "name": "Respond Project Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [460, 220],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"error\", \"message\": \"Project not found\" }",
+        "options": { "responseCode": 404 }
+      }
+    },
+    {
+      "id": "d448d364-1e2b-4d57-8276-ae7f78ce6fde",
+      "name": "Sticky Note db6a9ca3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-470, 10],
+      "parameters": {
+        "content": "## DD-2 Floor Plan Generator\nPOST /webhook/floor-plan-generator with JSON body: project_id (uuid, required), width_ft, depth_ft, rooms (2-12), design_type (Standard | Premium | Luxury) - all optional with defaults.\n\nDeterministic 2-band layout with central corridor. The 2D SVG is stored inline as a data URI in plan_2d_svg_url and the 3D box model JSON as a data URI in plan_3d_model_url (Supabase Storage upload is out of scope in tester mode). dimensions_json and materials_json hold the structured breakdowns.\n\nTester mode: NO email nodes - notifications are communications rows only.\nManual step: repoint Supabase credential dsZvYaB5av1RwbxL to https://fwzdhmobfcwsspobrvdl.supabase.co (service_role key).",
+        "color": 5,
+        "width": 960,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Floor Plan Request": {
+      "main": [[{ "node": "Normalize Plan Input", "type": "main", "index": 0 }]]
+    },
+    "Normalize Plan Input": {
+      "main": [[{ "node": "Fetch Project", "type": "main", "index": 0 }]]
+    },
+    "Fetch Project": {
+      "main": [[{ "node": "Project Found?", "type": "main", "index": 0 }]]
+    },
+    "Project Found?": {
+      "main": [
+        [{ "node": "Get Existing Plans", "type": "main", "index": 0 }],
+        [{ "node": "Respond Project Not Found", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Existing Plans": {
+      "main": [[{ "node": "Generate Floor Plan Layout", "type": "main", "index": 0 }]]
+    },
+    "Generate Floor Plan Layout": {
+      "main": [[{ "node": "Save Floor Plan", "type": "main", "index": 0 }]]
+    },
+    "Save Floor Plan": {
+      "main": [[{ "node": "Log Communication", "type": "main", "index": 0 }]]
+    },
+    "Log Communication": {
+      "main": [[{ "node": "Respond Generated", "type": "main", "index": 0 }]]
+    }
+  }
+}

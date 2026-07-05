@@ -1,0 +1,105 @@
+{
+  "name": "DD-3 Communication Logger",
+  "settings": { "executionOrder": "v1" },
+  "meta": { "note": "Export of live workflow A4LSXZZ4ZfkGEkGV. Credentials referenced by ID in n8n: Supabase dsZvYaB5av1RwbxL, Anthropic mXPwb5lEbxPFmxDt. NO email nodes (tester mode)." },
+  "nodes": [
+    {
+      "id": "58b862d5-ac75-4c0d-97a0-dd6a32ee4e80",
+      "name": "Webhook: Communication Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-420, 0],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "communication-logger",
+        "responseMode": "responseNode"
+      },
+      "webhookId": "2845d1eb-1952-48d0-8a66-9fb12fecff24"
+    },
+    {
+      "id": "bbcc6ed6-dd2e-420e-a974-401928807039",
+      "name": "Normalize Communication",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-200, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const src = $input.first().json;\nconst b = src.body && typeof src.body === 'object' ? src.body : src;\nconst projectId = String(b.project_id || src.project_id || '').trim();\nconst allowed = ['status_update', 'feasibility_sent', 'floor_plan_sent'];\nconst rawType = String(b.update_type || b.communication_type || src.update_type || 'status_update').trim();\nconst commType = allowed.indexOf(rawType) !== -1 ? rawType : 'status_update';\nconst defaultSubjects = { status_update: 'Project status update', feasibility_sent: 'Feasibility study shared', floor_plan_sent: 'Floor plans shared' };\nconst subject = String(b.subject || src.subject || defaultSubjects[commType]);\nconst message = String(b.message || src.message || 'Update logged via DD-3 Communication Logger.');\nconst sentBy = String(b.sent_by_email || src.sent_by_email || 'n8n@workflow.internal').trim();\nreturn [{ json: { project_id: projectId, communication_type: commType, subject: subject, message: message, sent_by_email: sentBy, sent_to_owner: false, metadata: { source: 'dd3-communication-logger', original_update_type: rawType, logged_at: new Date().toISOString() } } }];"
+      }
+    },
+    {
+      "id": "9a3c3e9a-2825-4e49-9d82-4831279fa081",
+      "name": "Insert Communication Row",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [20, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "communications",
+        "dataToSend": "autoMapInputData"
+      }
+    },
+    {
+      "id": "33e363f2-d668-4001-8a32-fdc66469b843",
+      "name": "Insert Audit Log",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [240, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "audit_logs",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "user_email", "fieldValue": "={{ $('Normalize Communication').item.json.sent_by_email }}" },
+            { "fieldId": "action", "fieldValue": "communication_logged" },
+            { "fieldId": "table_name", "fieldValue": "communications" },
+            { "fieldId": "record_id", "fieldValue": "={{ $json.id }}" },
+            { "fieldId": "new_values", "fieldValue": "={{ JSON.stringify($('Normalize Communication').item.json) }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "77d5aeb4-06d0-4ae7-ae51-a141e74ebc24",
+      "name": "Respond Logged",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [460, 0],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"logged\" }"
+      }
+    },
+    {
+      "id": "2ec26148-1140-44f3-91b6-083a3f9f5cd5",
+      "name": "Sticky Note 96704898",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-470, -50],
+      "parameters": {
+        "content": "## DD-3 Communication Logger\nPOST /webhook/communication-logger with JSON body: project_id (uuid, required), update_type (status_update | feasibility_sent | floor_plan_sent), message, subject, sent_by_email - optional with defaults.\n\nWrites a communications row (sent_to_owner = false) plus an audit_logs row (action = communication_logged).\n\nTester mode: NO email nodes here. The dashboard API handles preview-only sending with test addresses (theopenhotels@gmail.com routed to akashsakhrani05@gmail.com).\nManual step: repoint Supabase credential dsZvYaB5av1RwbxL to https://fwzdhmobfcwsspobrvdl.supabase.co (service_role key).",
+        "color": 6,
+        "width": 1180,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Communication Event": {
+      "main": [[{ "node": "Normalize Communication", "type": "main", "index": 0 }]]
+    },
+    "Normalize Communication": {
+      "main": [[{ "node": "Insert Communication Row", "type": "main", "index": 0 }]]
+    },
+    "Insert Communication Row": {
+      "main": [[{ "node": "Insert Audit Log", "type": "main", "index": 0 }]]
+    },
+    "Insert Audit Log": {
+      "main": [[{ "node": "Respond Logged", "type": "main", "index": 0 }]]
+    }
+  }
+}

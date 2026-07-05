@@ -1,0 +1,257 @@
+{
+  "id": "55UFg9NcfKW0eb1Q",
+  "name": "DD-1 Feasibility Study Generator",
+  "active": false,
+  "nodes": [
+    {
+      "id": "c2a7a2c3-f11a-448f-906b-98c51731e912",
+      "name": "Webhook: Feasibility Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-420, 60],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "feasibility-generator",
+        "responseMode": "responseNode"
+      },
+      "webhookId": "846ad020-f2c1-4945-af8d-5dd47e016640"
+    },
+    {
+      "id": "265fe929-9c78-4ba5-ada4-4a95e232f127",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-200, 60],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const src = $input.first().json;\nconst b = src.body && typeof src.body === 'object' ? src.body : src;\nconst projectId = String(b.project_id || src.project_id || '').trim();\nconst docSummary = String(b.document_summary || src.document_summary || 'No document summary provided.').trim();\nreturn [{ json: { project_id: projectId, document_summary: docSummary } }];"
+      }
+    },
+    {
+      "id": "f43bb70d-1c17-4c6b-b688-6ddae7aedf1d",
+      "name": "Fetch Project",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [20, 60],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "tableId": "projects",
+        "filters": {
+          "conditions": [{ "keyName": "id", "keyValue": "={{ $json.project_id }}" }]
+        }
+      },
+      "credentials": {
+        "supabaseApi": { "id": "dsZvYaB5av1RwbxL", "name": "Supabase service_role (HR portal)" }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "b67ef7da-e00f-43c2-9f79-3cb7ac2cf941",
+      "name": "Project Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [240, 60],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            { "leftValue": "={{ $json.id }}", "operator": { "type": "string", "operation": "notEmpty" }, "rightValue": "" }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a7c646e0-a616-4ad4-acd3-ba7045f01e80",
+      "name": "Generate Feasibility Study",
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [460, -40],
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": { "__rl": true, "mode": "list", "value": "claude-sonnet-5", "cachedResultName": "claude-sonnet-5" },
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "=Generate a DETAILED feasibility study for a {{ $json.property_type }} project in {{ $json.property_location }}. Project name: {{ $json.name }}. Project description: {{ $json.description }}. Documents provided: {{ $('Normalize Input').item.json.document_summary }}. Include sections: Executive Summary (2-3 sentences); Timeline: phases, total duration, key milestones; Risk Analysis: 5-10 major risks with impact level and mitigation; Cost Breakdown: land, construction, design, contingency, total (INR); Recommendations: top 3-5 actionable items. Return STRICT JSON with these keys and shapes: executive_summary (string); timeline (object with total_months as a number and phases as an array of objects each having name and months); risk_analysis (object with risks as an array of 5-10 objects each having description, impact, mitigation, where impact is High, Medium or Low); cost_breakdown (object with currency set to INR plus land, construction, design, contingency and total as numbers in INR); recommendations (array of 3-5 strings); detailed_report (markdown string of 1500-2500 words covering all sections in depth). Respond with ONLY the JSON object. No markdown fences, no prose outside JSON."
+            }
+          ]
+        },
+        "simplify": true,
+        "options": {
+          "maxTokens": 12000,
+          "temperature": 0.2,
+          "includeMergedResponse": true,
+          "system": "You are a senior real estate feasibility analyst for co-living and hospitality projects in India. You always respond with a single valid JSON object and nothing else."
+        }
+      },
+      "credentials": {
+        "anthropicApi": { "id": "mXPwb5lEbxPFmxDt", "name": "Anthropic" }
+      }
+    },
+    {
+      "id": "1c806570-a56d-4cc5-a8dd-85c536db1680",
+      "name": "Parse Feasibility JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, -40],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst projectId = $('Normalize Input').first().json.project_id;\nfunction collectStrings(v, out) { if (typeof v === 'string') { out.push(v); return; } if (Array.isArray(v)) { v.forEach(x => collectStrings(x, out)); return; } if (v && typeof v === 'object') { ['text', 'merged', 'output', 'completion', 'response', 'content', 'message'].forEach(k => { if (v[k] !== undefined) collectStrings(v[k], out); }); } }\nfunction tryParse(s) { if (typeof s !== 'string') return null; let t = s.trim(); t = t.replace(/```json/gi, '').replace(/```/g, '').trim(); const first = t.indexOf('{'); const last = t.lastIndexOf('}'); if (first === -1 || last === -1 || last <= first) return null; t = t.slice(first, last + 1); try { const p = JSON.parse(t); return p && typeof p === 'object' && !Array.isArray(p) ? p : null; } catch (e) { return null; } }\nlet parsed = null;\nlet rawAll = '';\nfor (const it of items) { const out = []; collectStrings(it.json, out); rawAll = rawAll + out.join('\\n'); for (const s of out) { parsed = tryParse(s); if (parsed) break; } if (parsed) break; }\nif (!parsed) { parsed = tryParse(rawAll); }\nif (!parsed) { return [{ json: { parse_ok: false, project_id: projectId, error_message: 'Could not parse strict JSON from the AI response', raw_snippet: rawAll.slice(0, 500) } }]; }\nconst rec = Array.isArray(parsed.recommendations) ? parsed.recommendations : (parsed.recommendations ? [String(parsed.recommendations)] : []);\nreturn [{ json: { parse_ok: true, project_id: projectId, executive_summary: String(parsed.executive_summary || ''), timeline: parsed.timeline && typeof parsed.timeline === 'object' ? parsed.timeline : {}, risk_analysis: parsed.risk_analysis && typeof parsed.risk_analysis === 'object' ? parsed.risk_analysis : {}, cost_breakdown: parsed.cost_breakdown && typeof parsed.cost_breakdown === 'object' ? parsed.cost_breakdown : {}, recommendations: rec, detailed_report: String(parsed.detailed_report || ''), status: 'Generated', generated_by_ai: true } }];"
+      }
+    },
+    {
+      "id": "ae8507d7-e15a-450f-a47a-ec07a5839598",
+      "name": "Parsed OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [900, -40],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            { "leftValue": "={{ $json.parse_ok }}", "operator": { "type": "boolean", "operation": "true" }, "rightValue": "" }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "27ae4284-bcbe-43e3-8e54-20413e7ba66d",
+      "name": "Save Feasibility Study",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1120, -140],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "feasibility_studies",
+        "dataToSend": "autoMapInputData",
+        "inputsToIgnore": "parse_ok,error_message,raw_snippet"
+      },
+      "credentials": {
+        "supabaseApi": { "id": "dsZvYaB5av1RwbxL", "name": "Supabase service_role (HR portal)" }
+      }
+    },
+    {
+      "id": "881dd87a-c568-442e-878c-98cdb58c6245",
+      "name": "Log Communication",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1340, -140],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "communications",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "project_id", "fieldValue": "={{ $('Normalize Input').item.json.project_id }}" },
+            { "fieldId": "communication_type", "fieldValue": "status_update" },
+            { "fieldId": "subject", "fieldValue": "Feasibility study generated" },
+            { "fieldId": "message", "fieldValue": "AI feasibility study generated and saved for review." },
+            { "fieldId": "sent_by_email", "fieldValue": "n8n@workflow.internal" },
+            { "fieldId": "sent_to_owner", "fieldValue": "false" }
+          ]
+        }
+      },
+      "credentials": {
+        "supabaseApi": { "id": "dsZvYaB5av1RwbxL", "name": "Supabase service_role (HR portal)" }
+      }
+    },
+    {
+      "id": "3cacaa6a-7b66-48cc-8f6f-b0084544a3e3",
+      "name": "Respond Generated",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [1560, -140],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"generated\" }"
+      }
+    },
+    {
+      "id": "1b6403a7-c653-47e7-8a25-72505635c9c6",
+      "name": "Log Parse Failure",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1120, 60],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "audit_logs",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "user_email", "fieldValue": "n8n@workflow.internal" },
+            { "fieldId": "action", "fieldValue": "feasibility_generation_failed" },
+            { "fieldId": "table_name", "fieldValue": "feasibility_studies" },
+            { "fieldId": "new_values", "fieldValue": "={{ JSON.stringify({ project_id: $('Normalize Input').item.json.project_id, error: $json.error_message, raw_snippet: $json.raw_snippet }) }}" }
+          ]
+        }
+      },
+      "credentials": {
+        "supabaseApi": { "id": "dsZvYaB5av1RwbxL", "name": "Supabase service_role (HR portal)" }
+      }
+    },
+    {
+      "id": "f8b60f7a-0ca6-4d18-9a5e-32b16600340f",
+      "name": "Respond Parse Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [1340, 60],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"error\", \"message\": \"AI response could not be parsed\" }",
+        "options": { "responseCode": 500 }
+      }
+    },
+    {
+      "id": "b8bb325c-5f6d-4ca2-9db0-e4a489a4d873",
+      "name": "Respond Project Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [460, 220],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"error\", \"message\": \"Project not found\" }",
+        "options": { "responseCode": 404 }
+      }
+    },
+    {
+      "id": "413cba4d-613d-4568-b0d9-69fbcb46c5b8",
+      "name": "Sticky Note 97b48980",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-470, 10],
+      "parameters": {
+        "content": "## DD-1 Feasibility Study Generator\nPOST /webhook/feasibility-generator with JSON body: project_id (uuid, required), document_summary (optional).\n\nFlow: fetch project from Supabase, ask Claude for a strict-JSON feasibility study, parse it defensively, save to feasibility_studies, log a communications row, respond to the caller.\n\nTester mode: NO email nodes anywhere - notifications are rows in communications/audit_logs only.\nManual step: repoint Supabase credential dsZvYaB5av1RwbxL to project https://fwzdhmobfcwsspobrvdl.supabase.co (service_role key).",
+        "color": 4,
+        "width": 960,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Feasibility Request": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Normalize Input": { "main": [[{ "node": "Fetch Project", "type": "main", "index": 0 }]] },
+    "Fetch Project": { "main": [[{ "node": "Project Found?", "type": "main", "index": 0 }]] },
+    "Project Found?": { "main": [[{ "node": "Generate Feasibility Study", "type": "main", "index": 0 }], [{ "node": "Respond Project Not Found", "type": "main", "index": 0 }]] },
+    "Generate Feasibility Study": { "main": [[{ "node": "Parse Feasibility JSON", "type": "main", "index": 0 }]] },
+    "Parse Feasibility JSON": { "main": [[{ "node": "Parsed OK?", "type": "main", "index": 0 }]] },
+    "Parsed OK?": { "main": [[{ "node": "Save Feasibility Study", "type": "main", "index": 0 }], [{ "node": "Log Parse Failure", "type": "main", "index": 0 }]] },
+    "Save Feasibility Study": { "main": [[{ "node": "Log Communication", "type": "main", "index": 0 }]] },
+    "Log Communication": { "main": [[{ "node": "Respond Generated", "type": "main", "index": 0 }]] },
+    "Log Parse Failure": { "main": [[{ "node": "Respond Parse Error", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": { "aiBuilderAssisted": true, "builderVariant": "mcp" },
+  "pinData": {},
+  "tags": []
+}

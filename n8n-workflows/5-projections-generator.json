@@ -1,0 +1,270 @@
+{
+  "name": "DD-5 Projections Generator",
+  "settings": { "executionOrder": "v1" },
+  "meta": { "note": "Export of live workflow fHwWy4ORPfHnUu5o. Credentials referenced by ID in n8n: Supabase dsZvYaB5av1RwbxL, Anthropic mXPwb5lEbxPFmxDt. NO email nodes (tester mode)." },
+  "nodes": [
+    {
+      "id": "6ee9d2fa-89fa-49e7-95ef-8d99c46d159b",
+      "name": "Weekly Monday 09:00 Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-420, -120],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "weeks", "weeksInterval": 1, "triggerAtDay": [1], "triggerAtHour": 9, "triggerAtMinute": 0 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d3d4399f-6e2a-403e-b9aa-d29cc3269c45",
+      "name": "Fetch Projects",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [-200, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "projects",
+        "returnAll": true,
+        "filterType": "none"
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "117aa56e-4245-4a9d-a9a2-3e9b0d6e93af",
+      "name": "Fetch Investments",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [20, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "investment_requirements",
+        "returnAll": true,
+        "filterType": "none"
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "3c027445-5138-4ced-8ecf-936611fc60cd",
+      "name": "Fetch Team Tasks",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [240, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "team_tasks",
+        "returnAll": true,
+        "filterType": "none"
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c1781ee3-bbc4-4576-a5fa-5894bd751fbe",
+      "name": "Aggregate Portfolio Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const projects = $('Fetch Projects').all().map(i => i.json).filter(p => p && p.id);\nconst investments = $('Fetch Investments').all().map(i => i.json).filter(r => r && r.id);\nconst tasks = $('Fetch Team Tasks').all().map(i => i.json).filter(t => t && t.id);\nconst now = Date.now();\nconst isDone = t => String(t.status) === 'Done';\nconst isOverdue = t => { if (isDone(t)) { return false; } const d = new Date(t.due_date).getTime(); return !isNaN(d) && d < now; };\nconst byStatus = {};\nprojects.forEach(p => { const s = String(p.status || 'Unknown'); byStatus[s] = (byStatus[s] || 0) + 1; });\nconst totalInvestment = investments.reduce((a, r) => a + (Number(r.total_investment) || 0), 0);\nconst roiVals = investments.filter(r => r.estimated_roi_percent !== null && r.estimated_roi_percent !== undefined).map(r => Number(r.estimated_roi_percent)).filter(v => !isNaN(v));\nconst avgRoi = roiVals.length ? Math.round((roiVals.reduce((a, b) => a + b, 0) / roiVals.length) * 100) / 100 : null;\nconst doneCount = tasks.filter(isDone).length;\nconst overdueCount = tasks.filter(isOverdue).length;\nconst projSummaries = projects.map(p => { const inv = investments.filter(r => r.project_id === p.id); const ptasks = tasks.filter(t => t.project_id === p.id); return { name: p.name, status: p.status, property_type: p.property_type, property_location: p.property_location, total_investment: inv.reduce((a, r) => a + (Number(r.total_investment) || 0), 0), estimated_roi_percent: inv.length && inv[0].estimated_roi_percent !== null && inv[0].estimated_roi_percent !== undefined ? Number(inv[0].estimated_roi_percent) : null, task_count: ptasks.length, tasks_done: ptasks.filter(isDone).length, tasks_overdue: ptasks.filter(isOverdue).length }; });\nconst aggregates = { as_of: new Date().toISOString(), currency: 'INR', project_count: projects.length, projects_by_status: byStatus, total_investment_inr: totalInvestment, average_estimated_roi_percent: avgRoi, task_totals: { total: tasks.length, completed: doneCount, overdue: overdueCount, completion_rate: tasks.length ? Math.round((doneCount / tasks.length) * 100) / 100 : 0 }, projects: projSummaries };\nreturn [{ json: { aggregates: aggregates, project_ids: projects.map(p => p.id) } }];"
+      }
+    },
+    {
+      "id": "15d8abae-6f43-4d78-8471-ca4fd00428e6",
+      "name": "Generate Projections",
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [680, 0],
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-5",
+          "cachedResultName": "claude-sonnet-5"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "=Based on this aggregated portfolio data for the Olive Living design and project management dashboard: {{ JSON.stringify($json.aggregates) }} . Generate exactly 4 projections, one for each projection_type: Timeline, Budget, ROI, Risk. Return a STRICT JSON array of exactly 4 objects. Each object must have keys: projection_type (one of Timeline, Budget, ROI, Risk); projection_title (short descriptive string); data (object that must contain confidence_level as a number between 0 and 1, insights as an array of 3-5 strings, plus type-specific fields: projected_completion_months for Timeline, projected_total_cost_inr and variance_percent for Budget, projected_roi_percent and payback_period_months for ROI, risk_score_out_of_10 and top_risks as an array of strings for Risk). Respond with ONLY the JSON array. No markdown fences, no prose outside the JSON array."
+            }
+          ]
+        },
+        "simplify": true,
+        "options": {
+          "maxTokens": 6000,
+          "temperature": 0.2,
+          "includeMergedResponse": true,
+          "system": "You are a portfolio analyst for real estate development projects in India. You always respond with a single valid JSON array and nothing else."
+        }
+      }
+    },
+    {
+      "id": "173943c8-d4e4-4b5a-8e42-7d4b42cedea3",
+      "name": "Parse Projections",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const projectIds = $('Aggregate Portfolio Data').first().json.project_ids || [];\nconst items = $input.all();\nfunction collectStrings(v, out) { if (typeof v === 'string') { out.push(v); return; } if (Array.isArray(v)) { v.forEach(x => collectStrings(x, out)); return; } if (v && typeof v === 'object') { ['text', 'merged', 'output', 'completion', 'response', 'content', 'message'].forEach(k => { if (v[k] !== undefined) collectStrings(v[k], out); }); } }\nfunction tryParseArray(s) { if (typeof s !== 'string') return null; let t = s.trim(); t = t.replace(/```json/gi, '').replace(/```/g, '').trim(); const first = t.indexOf('['); const last = t.lastIndexOf(']'); if (first === -1 || last === -1 || last <= first) return null; t = t.slice(first, last + 1); try { const p = JSON.parse(t); return Array.isArray(p) ? p : null; } catch (e) { return null; } }\nlet arr = null;\nlet rawAll = '';\nfor (const it of items) { const out = []; collectStrings(it.json, out); rawAll = rawAll + out.join('\\n'); for (const s of out) { arr = tryParseArray(s); if (arr) break; } if (arr) break; }\nif (!arr) { arr = tryParseArray(rawAll); }\nconst allowedTypes = ['Timeline', 'Budget', 'ROI', 'Risk'];\nconst valid = (arr || []).filter(p => p && typeof p === 'object' && allowedTypes.indexOf(String(p.projection_type)) !== -1 && p.projection_title && p.data && typeof p.data === 'object');\nif (!valid.length) { return [{ json: { parse_ok: false, error_message: 'Could not parse a valid projections JSON array from the AI response', raw_snippet: rawAll.slice(0, 500) } }]; }\nreturn valid.map(p => { const data = p.data; let cl = Number(data.confidence_level); if (isNaN(cl)) { cl = 0.5; } if (cl > 1) { cl = cl / 100; } if (cl < 0) { cl = 0; } if (cl > 1) { cl = 1; } data.confidence_level = Math.round(cl * 100) / 100; if (!Array.isArray(data.insights)) { data.insights = data.insights ? [String(data.insights)] : []; } return { json: { parse_ok: true, projection_type: String(p.projection_type), projection_title: String(p.projection_title), data: data, generated_from_projects: projectIds, recipients_emails: ['akashsakhrani05@gmail.com'] } }; });"
+      }
+    },
+    {
+      "id": "c294ab3a-4795-44da-9908-26cf8fe2542f",
+      "name": "Parsed OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1120, 0],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.parse_ok }}",
+              "operator": { "type": "boolean", "operation": "true" },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f1a32591-7147-4650-97e3-cbcaeddc3c39",
+      "name": "Insert Projection Rows",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1340, -100],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "projections",
+        "dataToSend": "autoMapInputData",
+        "inputsToIgnore": "parse_ok"
+      }
+    },
+    {
+      "id": "fa8b4f1f-03b9-4d9d-9341-da6cc48e8581",
+      "name": "Audit: Projections Generated",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1560, -100],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "audit_logs",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "user_email", "fieldValue": "n8n@workflow.internal" },
+            { "fieldId": "action", "fieldValue": "projections_generated" },
+            { "fieldId": "table_name", "fieldValue": "projections" },
+            { "fieldId": "new_values", "fieldValue": "={{ JSON.stringify({ projection_count: $('Parse Projections').all().length, types: $('Parse Projections').all().map(i => i.json.projection_type), generated_at: $now.toISO() }) }}" }
+          ]
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "04b81ac7-9919-4ff2-b132-4ecec2fb50ea",
+      "name": "Audit: Generation Failed",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1340, 120],
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "audit_logs",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "user_email", "fieldValue": "n8n@workflow.internal" },
+            { "fieldId": "action", "fieldValue": "projections_generation_failed" },
+            { "fieldId": "table_name", "fieldValue": "projections" },
+            { "fieldId": "new_values", "fieldValue": "={{ JSON.stringify({ error: $json.error_message, raw_snippet: $json.raw_snippet }) }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "0ae85141-6b2d-43f0-87c7-c7720517bf3f",
+      "name": "Webhook: Projections Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-420, 120],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "projections-generator",
+        "responseMode": "onReceived",
+        "options": {
+          "responseData": "{\"status\":\"accepted\",\"message\":\"Projections generation started\"}"
+        }
+      },
+      "webhookId": "e5e3ee78-82e6-4526-b251-b27c43546de4"
+    },
+    {
+      "id": "ec404bd1-bd82-4bb5-bcce-61fa920a8557",
+      "name": "Sticky Note 8256be71",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-470, -170],
+      "parameters": {
+        "content": "## DD-5 Projections Generator\nTwo triggers: weekly Monday 09:00 schedule (set workflow timezone to Asia/Kolkata in Workflow Settings) AND POST /webhook/projections-generator for on-demand runs (responds immediately with an accepted message).\n\nAggregates projects + investment_requirements + team_tasks, asks Claude for 4 projections (Timeline, Budget, ROI, Risk) as strict JSON, inserts them into projections with recipients_emails = akashsakhrani05@gmail.com (tester constant), and writes an audit_logs row (projections_generated).\n\nTester mode: NO email nodes - projections are stored for the dashboard to display.\nManual step: repoint Supabase credential dsZvYaB5av1RwbxL to https://fwzdhmobfcwsspobrvdl.supabase.co (service_role key).",
+        "color": 7,
+        "width": 960,
+        "height": 440
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Monday 09:00 Trigger": {
+      "main": [[{ "node": "Fetch Projects", "type": "main", "index": 0 }]]
+    },
+    "Fetch Projects": {
+      "main": [[{ "node": "Fetch Investments", "type": "main", "index": 0 }]]
+    },
+    "Fetch Investments": {
+      "main": [[{ "node": "Fetch Team Tasks", "type": "main", "index": 0 }]]
+    },
+    "Fetch Team Tasks": {
+      "main": [[{ "node": "Aggregate Portfolio Data", "type": "main", "index": 0 }]]
+    },
+    "Aggregate Portfolio Data": {
+      "main": [[{ "node": "Generate Projections", "type": "main", "index": 0 }]]
+    },
+    "Generate Projections": {
+      "main": [[{ "node": "Parse Projections", "type": "main", "index": 0 }]]
+    },
+    "Parse Projections": {
+      "main": [[{ "node": "Parsed OK?", "type": "main", "index": 0 }]]
+    },
+    "Parsed OK?": {
+      "main": [
+        [{ "node": "Insert Projection Rows", "type": "main", "index": 0 }],
+        [{ "node": "Audit: Generation Failed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Insert Projection Rows": {
+      "main": [[{ "node": "Audit: Projections Generated", "type": "main", "index": 0 }]]
+    },
+    "Webhook: Projections Request": {
+      "main": [[{ "node": "Fetch Projects", "type": "main", "index": 0 }]]
+    }
+  }
+}
