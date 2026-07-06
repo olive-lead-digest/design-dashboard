@@ -8,6 +8,8 @@ TESTER MODE ($0, mock data, no real emails). Full spec implemented: 5 pages, 8 p
 tabs, 26 API routes, 3-layer @oliveliving.com auth, 2D SVG + 3D three.js floor plans.
 
 ## 🔴 Invariants (never violate)
+- Login: @oliveliving.com only, EXCEPT tester mode also admits theopenhotels@gmail.com
+  (TESTER_LOGIN_WHITELIST in src/lib/constants.ts — ignored when tester mode is off).
 - Tester emails ONLY: theopenhotels@gmail.com → akashsakhrani05@gmail.com. Never owner_email.
 - No real email dispatch in tester mode (previews + communication logs only).
 - $0: free tiers only. Secrets never in git (.env.local is gitignored; .env.production holds non-secrets only).

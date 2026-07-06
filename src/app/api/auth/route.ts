@@ -5,7 +5,7 @@ import { cookies } from 'next/headers';
 import { z } from 'zod';
 import { createSessionToken, sessionCookieOptions } from '@/lib/auth';
 import { logAction, requireSession } from '@/lib/auth-server';
-import { IS_TESTER_MODE, SESSION_COOKIE } from '@/lib/constants';
+import { IS_TESTER_MODE, isAllowedSessionEmail, SESSION_COOKIE } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,7 +68,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Domain enforcement (layer 1 of 3 — middleware + requireSession re-check).
-    if (!/@oliveliving\.com$/i.test(email)) {
+    // Tester mode additionally admits the whitelisted test account (theopenhotels@gmail.com).
+    if (!isAllowedSessionEmail(email)) {
       recordFailure(email);
       return NextResponse.json({ error: 'Access restricted to @oliveliving.com accounts' }, { status: 401 });
     }

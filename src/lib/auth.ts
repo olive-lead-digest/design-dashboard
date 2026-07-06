@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { SessionUser } from '@/types';
-import { SESSION_MAX_AGE_SECONDS } from './constants';
+import { isAllowedSessionEmail, SESSION_MAX_AGE_SECONDS } from './constants';
 
 const SECRET = process.env.SESSION_SECRET || 'dev-only-secret-change-in-vercel';
 
@@ -28,7 +28,7 @@ export function verifySessionToken(token: string | undefined): SessionUser | nul
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
     const user = JSON.parse(Buffer.from(payload, 'base64url').toString()) as SessionUser;
     if (user.exp < Date.now()) return null;
-    if (!user.email.toLowerCase().endsWith('@oliveliving.com')) return null; // layer 2 enforcement
+    if (!isAllowedSessionEmail(user.email)) return null; // layer 2 enforcement (+ tester whitelist)
     return user;
   } catch {
     return null;

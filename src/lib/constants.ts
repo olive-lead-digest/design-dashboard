@@ -13,6 +13,20 @@ export const PUBLIC_ALLOWED_DOMAIN = '@oliveliving.com';
 
 export const TESTER_BADGE_TEXT = `🧪 TESTER MODE - Emails: ${TESTER_SENDER} → ${TESTER_RECEIVER}`;
 
+/**
+ * TESTER-MODE LOGIN EXCEPTION: the test sender account may sign in while
+ * NEXT_PUBLIC_TESTER_MODE=true so external testers can access the dashboard.
+ * In production mode this list is IGNORED — @oliveliving.com only.
+ */
+export const TESTER_LOGIN_WHITELIST: readonly string[] = [TESTER_SENDER];
+
+/** Single source of truth for who may hold a session (route + middleware + client). */
+export function isAllowedSessionEmail(email: string): boolean {
+  const e = email.trim().toLowerCase();
+  if (e.endsWith('@oliveliving.com')) return true;
+  return IS_TESTER_MODE && TESTER_LOGIN_WHITELIST.includes(e);
+}
+
 export const SESSION_COOKIE = 'dd_session';
 export const SESSION_MAX_AGE_SECONDS = 30 * 60; // 30-min inactivity auto-logout
 

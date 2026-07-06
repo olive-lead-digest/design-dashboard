@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isAllowedSessionEmail } from '@/lib/constants';
 
 /**
  * Security middleware (Edge runtime):
@@ -31,7 +32,7 @@ async function verifyToken(token: string | undefined, secret: string): Promise<{
   try {
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString()) as { email: string; exp: number };
     if (data.exp < Date.now()) return null;
-    if (!data.email.toLowerCase().endsWith('@oliveliving.com')) return null;
+    if (!isAllowedSessionEmail(data.email)) return null; // @oliveliving.com, or tester whitelist in tester mode
     return { email: data.email };
   } catch {
     return null;
